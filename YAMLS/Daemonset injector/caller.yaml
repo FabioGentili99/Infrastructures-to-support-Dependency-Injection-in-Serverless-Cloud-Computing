@@ -1,0 +1,9 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: caller
+spec:
+  template:
+    spec:
+      containers:
+        - image: fabiogentili/caller-go

@@ -1,0 +1,30 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: caller-injector
+  labels:
+    app: caller-injector
+spec:
+  template:
+    metadata:
+      labels:
+        app: caller-injector
+    spec:
+      containers:
+        - name: caller-injector
+          image: fabiogentili/caller-injector-go
+          ports:
+            - containerPort: 8080
+        - name: injector
+          image: fabiogentili/injector-go
+          env:
+            - name: MONGO_URI
+              value: mongodb://mongo.default.svc.cluster.local:27017
+          readinessProbe:
+            httpGet:
+              path: /services/hello
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+
