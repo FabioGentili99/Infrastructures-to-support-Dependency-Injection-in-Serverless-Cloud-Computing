@@ -1,0 +1,140 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policies
+  labels:
+    app: opa
+data:
+  # This Rego policy defines basic read/write authorization.
+  # It assumes that the client querying OPA will send a JSON input
+  # with a 'user.role' field and a 'method' field (e.g., GET, PUT, POST, DELETE).
+  authz.rego: |
+    package authz
+
+    # Default denial: all requests are denied unless explicitly allowed by another rule.
+    default allow = false
+
+    # Allow read (GET) access for users with 'reader' or 'admin' roles.
+    allow if {
+        input.method == "GET"
+        input.user.role == "reader"
+    }
+
+    allow if {
+        input.method == "GET"
+        input.user.role == "admin"
+    }
+
+    # Allow write (PUT, POST, DELETE) access only for users with 'admin' role.
+    allow if {
+        input.method == "PUT"
+        input.user.role == "admin"
+    }
+
+    allow if {
+        input.method == "POST"
+        input.user.role == "admin"
+    }
+
+    allow if {
+        input.method == "DELETE"
+        input.user.role == "admin"
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa-server
+  labels:
+    app: opa
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      labels:
+        app: opa
+    spec:
+      containers:
+      - name: opa
+        image: openpolicyagent/opa:latest
+        args:
+          - "run"
+          - "--server"             # Run OPA in server mode
+          - "--log-level=info"     # Set log level to info
+          - "--addr=:8181"         # Listen on port 8181 for HTTP requests
+          - "/etc/opa/authz.rego"
+        ports:
+        - containerPort: 8181
+          name: http
+        volumeMounts:
+        - name: opa-policy-volume
+          mountPath: /etc/opa/authz.rego # Mount the file directly
+          subPath: authz.rego            # Reference the key in the ConfigMap
+        readinessProbe:
+          httpGet:
+            path: /health?full=1
+            port: 8181
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8181
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      volumes:
+      - name: opa-policy-volume
+        configMap:
+          name: opa-policies
+          items:
+            - key: authz.rego       # The key in the ConfigMap
+              path: authz.rego      # The filename it will appear as in the volume
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa-service
+  labels:
+    app: opa
+spec:
+  selector:
+    app: opa
+  ports:
+    - protocol: TCP
+      port: 8181
+      targetPort: http
+  type: ClusterIP # Internal service for cluster communication
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: opa-hpa
+  labels:
+    app: opa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: opa-server
+  minReplicas: 1 
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50 # Target 50% CPU utilization
